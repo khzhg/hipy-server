@@ -30,18 +30,42 @@ function convertM3uToNormal(m3u) {
         let currentGroupTitle = '';
         lines.forEach((line) => {
             if (line.startsWith('#EXTINF:')) {
-                const groupTitle = line.split('"')[1].trim();
-                TV = line.split('"')[2].substring(1);
+                line = line.replace(/'/g, '"');
+                let groupTitle = '未知频道';
+                let tvg_name = '';
+                let tvg_logo = '';
+                try {
+                    groupTitle = line.match(/group-title="(.*?)"/)[1].trim();
+                } catch (e) {
+                }
+                try {
+                    tvg_name = line.match(/tvg-name="(.*?)"/)[1].trim();
+                } catch (e) {
+                }
+                try {
+                    tvg_logo = line.match(/tvg-logo="(.*?)"/)[1].trim();
+                } catch (e) {
+                }
+                TV = line.split(',').slice(-1)[0].trim();
                 if (currentGroupTitle !== groupTitle) {
                     currentGroupTitle = groupTitle;
-                    result += `\n${currentGroupTitle},${flag}\n`;
+                    let ret_list = [currentGroupTitle, flag];
+                    // if(tvg_name){
+                    //     ret_list.push(tvg_name);
+                    // }
+                    // if(tvg_logo){
+                    //     ret_list.push(tvg_logo);
+                    // }
+                    result += `\n${ret_list.join(",")}\n`;
                 }
             } else if (line.startsWith('http')) {
                 const splitLine = line.split(',');
                 result += `${TV}\,${splitLine[0]}\n`;
             }
         });
-        return result.trim();
+        result = result.trim();
+        // log(result);
+        return result
     } catch (e) {
         log(`m3u直播转普通直播发生错误:${e.message}`);
         return m3u
@@ -90,7 +114,7 @@ function gen_group_dict(arr, parse) {
             k = parse(k);
         }
         if (!dict[k]) {
-            dict[k] = [it]
+            dict[k] = [it];
         } else {
             dict[k].push(it);
         }
@@ -108,8 +132,11 @@ globalThis.__ext = {data_dict: {}};
 var rule = {
     title: '直播转点播[合]',
     author: '道长',
-    version: '20240627 beta1',
+    version: '20240628 beta5',
     update_info: `
+20240628 beta5:
+1.增加范冰冰v6源
+2.修复带图标的m3u源识别
 20240627 beta1:
 1.将原drpy项目的live2cms.js转换成hipy传参源。
 【特别说明】支持m3u和txt的直播
@@ -148,14 +175,18 @@ var rule = {
         if (_url && typeof (_url) === 'string' && /^(http|file)/.test(_url)) {
             let html = request(_url);
             let json = JSON.parse(html);
-            __ext.data = json;
+
             let _classes = [];
             rule.filter = {};
             rule.filter_def = {};
             json.forEach(it => {
+                if (it.url && !/^(http|file)/.test(it.url)) {
+                    it.url = urljoin(_url, it.url);
+                }
                 let _obj = {
                     type_name: it.name,
-                    type_id: it.url && !/^(http|file)/.test(it.url) ? urljoin(_url, it.url) : it.url,
+                    type_id: it.url,
+                    img: it.img,
                 };
                 _classes.push(_obj);
                 let json1 = [{'n': '多线路分组', 'v': 'groups'}, {'n': '单线路', 'v': 'all'}];
@@ -170,6 +201,7 @@ var rule = {
                     rule.filter[it.url] = json1
                 }
             });
+            __ext.data = json;
             rule.classes = _classes;
         }
     }),
@@ -187,6 +219,9 @@ var rule = {
         if (rule.classes) {
             let randomClass = getRandomItem(rule.classes);
             let _get_url = randomClass.type_id;
+            // let current_vod = rule.classes.find(item => item.type_id === _get_url);
+            // let _pic = current_vod ? current_vod.img : '';
+            let _pic = randomClass.img;
             let html;
             if (__ext.data_dict[_get_url]) {
                 html = __ext.data_dict[_get_url];
@@ -205,7 +240,7 @@ var rule = {
                     VODS.push({
                         vod_name: vname,
                         vod_id: _get_url + '$' + vname,
-                        vod_pic: rule.def_pic,
+                        vod_pic: _pic || rule.def_pic,
                         vod_remarks: vtab,
                     });
                 });
@@ -223,8 +258,9 @@ var rule = {
                 rule.showMode = MY_FL.show;
                 setItem('showMode', rule.showMode);
             }
-            log(input);
             let _get_url = input.split('#')[0];
+            let current_vod = rule.classes.find(item => item.type_id === MY_CATE);
+            let _pic = current_vod ? current_vod.img : '';
             let html;
             if (__ext.data_dict[_get_url]) {
                 html = __ext.data_dict[_get_url];
@@ -244,7 +280,7 @@ var rule = {
                         // vod_name:it.split(',')[0],
                         vod_name: vname,
                         vod_id: _get_url + '$' + vname,
-                        vod_pic: rule.def_pic,
+                        vod_pic: _pic || rule.def_pic,
                         vod_remarks: vtab,
                     });
                 });
@@ -253,7 +289,6 @@ var rule = {
             }
         }
     }),
-    // 一级: 'json:list;vod_name;vod_pic;vod_remarks;vod_id;vod_play_from',
     二级: $js.toString(() => {
         VOD = {};
         if (orId === 'update_info') {
@@ -275,20 +310,22 @@ var rule = {
                     let vod_name = _tab.replace('#search#', '');
                     let vod_play_from = '来自搜索';
                     vod_play_from += `:${_get_url}`;
-                    // let vod_play_url = vod_name+'$'+_get_url;
-                    // log(vod_play_url);
                     let vod_play_url = rule.groupDict[_get_url].map(x => x.replace(',', '$')).join('#');
+                    log(orId);
                     VOD = {
                         vod_name: '搜索:' + vod_name,
                         type_name: "直播列表",
                         vod_pic: rule.def_pic,
-                        vod_content: orId,
+                        // vod_content: orId,
+                        vod_content: orId.replace(getHome(orId), 'http://***'),
                         vod_play_from: vod_play_from,
                         vod_play_url: vod_play_url,
                         vod_director: rule.tips,
                         vod_remarks: rule.tips,
                     }
                 } else {
+                    let current_vod = rule.classes.find(item => item.type_id === _get_url);
+                    let _pic = current_vod ? current_vod.img : '';
                     let html;
                     if (__ext.data_dict[_get_url]) {
                         html = __ext.data_dict[_get_url];
@@ -325,9 +362,9 @@ var rule = {
                         let tabs = [];
                         for (let i = 0; i < groups.length; i++) {
                             if (i === 0) {
-                                tabs.push(vod_name + '1')
+                                tabs.push(vod_name + '1');
                             } else {
-                                tabs.push(` ${i + 1} `)
+                                tabs.push(`@${i + 1} `);
                             }
                         }
                         vod_play_url = groups.map(it => it.join('#')).join('$$$');
@@ -336,12 +373,14 @@ var rule = {
                         vod_play_url = _list.join('#');
                         vod_play_from = vod_name;
                     }
+                    log(orId);
                     VOD = {
                         vod_id: orId,
                         vod_name: vod_name + '|' + _tab,
                         type_name: "直播列表",
-                        vod_pic: rule.def_pic,
-                        vod_content: orId,
+                        vod_pic: _pic || rule.def_pic,
+                        // vod_content: orId,
+                        vod_content: orId.replace(getHome(orId), 'http://***'),
                         vod_play_from: vod_play_from,
                         vod_play_url: vod_play_url,
                         vod_director: rule.tips,
@@ -356,6 +395,8 @@ var rule = {
         VODS = [];
         if (rule.classes && MY_PAGE <= 1) {
             let _get_url = __ext.data[0].url;
+            let current_vod = rule.classes.find(item => item.type_id === _get_url);
+            let _pic = current_vod ? current_vod.img : '';
             let html;
             if (__ext.data_dict[_get_url]) {
                 html = __ext.data_dict[_get_url];
@@ -375,18 +416,20 @@ var rule = {
             let plays = Array.from(new Set(links));
             log('搜索关键词:' + KEY);
             log('过滤前:' + plays.length);
-            plays = plays.filter(it => it.includes(KEY));
+            // plays = plays.filter(it => it.includes(KEY));
+            plays = plays.filter(it => new RegExp(KEY, 'i').test(it));
             log('过滤后:' + plays.length);
             log(plays);
             let new_group = gen_group_dict(plays);
             rule.groupDict = Object.assign(rule.groupDict, new_group);
             // 搜索分组结果存至本地方便二级调用
             setItem('groupDict', JSON.stringify(rule.groupDict));
-            Object.keys(rule.groupDict).forEach((it) => {
+            // 返回的还是搜索的new_group
+            Object.keys(new_group).forEach((it) => {
                 VODS.push({
                     'vod_name': it,
                     'vod_id': it + '$' + KEY + '#search#',
-                    'vod_pic': rule.def_pic,
+                    'vod_pic': _pic || rule.def_pic,
                 });
             });
         }
@@ -394,6 +437,8 @@ var rule = {
     lazy: $js.toString(() => {
         if (/\.(m3u8|mp4)/.test(input)) {
             input = {parse: 0, url: input}
+        } else if (/yangshipin|1905\.com/.test(input)) {
+            input = {parse: 1, url: input, js: '', header: {'User-Agent': PC_UA}, parse_extra: '&is_pc=1'};
         } else {
             input
         }
